@@ -1,0 +1,169 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Lambda PDF Project - A SAM Template for managing PDF upload and text
+  extraction.
+
+  '
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 256
+    Tracing: Active
+    LoggingConfig:
+      LogFormat: JSON
+  Api:
+    TracingEnabled: true
+    Cors:
+      AllowMethods: '*'
+      AllowHeaders: '*'
+      AllowOrigin: '*'
+      MaxAge: '300'
+      AllowCredentials: true
+Resources:
+  UploadLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: uploadLambda
+      Handler: index.lambda_handler
+      Runtime: python3.9
+      CodeUri: UploadLambdaFunction
+      Events:
+        UploadAPI:
+          Type: Api
+          Properties:
+            Path: /upload
+            Method: post
+        UploadAPIOptions:
+          Type: Api
+          Properties:
+            Path: /upload
+            Method: options
+      Policies:
+      - S3WritePolicy:
+          BucketName:
+            Ref: S3Bucket
+      Environment:
+        Variables:
+          BUCKET_NAME:
+            Ref: S3Bucket
+    Metadata:
+      SamResourceId: UploadLambdaFunction
+  ExtractTextLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: extractTextLambda
+      Handler: index.lambda_handler
+      Runtime: python3.9
+      CodeUri: ExtractTextLambdaFunction
+      Events:
+        S3Event:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: S3Bucket
+            Events: s3:ObjectCreated:*
+      Policies:
+      - S3ReadPolicy:
+          BucketName: pdf-upload-bucket-8392380238
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: PdfTextTable
+      - Statement:
+        - Effect: Allow
+          Action:
+          - textract:AnalyzeDocument
+          - textract:DetectDocumentText
+          Resource: '*'
+      Environment:
+        Variables:
+          DYNAMODB_TABLE:
+            Ref: PdfTextTable
+    Metadata:
+      SamResourceId: ExtractTextLambdaFunction
+  AskQuestionLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: askQuestionLambda
+      Handler: index.lambda_handler
+      Runtime: python3.9
+      CodeUri: AskQuestionLambdaFunction
+      Events:
+        AskQuestionAPI:
+          Type: Api
+          Properties:
+            Path: /ask
+            Method: post
+        AskQuestionAPIOptions:
+          Type: Api
+          Properties:
+            Path: /ask
+            Method: options
+      Policies:
+      - DynamoDBReadPolicy:
+          TableName:
+            Ref: PdfTextTable
+      - Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - bedrock:InvokeModel
+          - bedrock-runtime:InvokeModel
+          - bedrock-runtime:InvokeModelWithResponseStream
+          - bedrock:InvokeModelWithResponseStream
+          Resource:
+          - Fn::Sub: arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-text-lite-v1
+      Environment:
+        Variables:
+          DYNAMODB_TABLE:
+            Ref: PdfTextTable
+          BEDROCK_MODEL_ID: amazon.titan-text-lite-v1
+      Timeout: 30
+      MemorySize: 256
+    Metadata:
+      SamResourceId: AskQuestionLambdaFunction
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: pdf-upload-bucket-8392380238
+  PdfTextTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: PdfTextTable
+      AttributeDefinitions:
+      - AttributeName: id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: id
+        KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+Outputs:
+  UploadApiEndpoint:
+    Description: API Gateway endpoint for uploading PDFs
+    Value:
+      Fn::Sub: https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Stage/upload
+  UploadLambdaFunction:
+    Description: Upload Lambda Function
+    Value:
+      Fn::GetAtt:
+      - UploadLambdaFunction
+      - Arn
+  ExtractTextLambdaFunction:
+    Description: Process PDF Lambda Function
+    Value:
+      Fn::GetAtt:
+      - ExtractTextLambdaFunction
+      - Arn
+  AskQuestionApiEndpoint:
+    Description: API Gateway endpoint for asking questions
+    Value:
+      Fn::Sub: https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Stage/ask
+  AskQuestionLambdaFunction:
+    Description: Ask Question Lambda Function
+    Value:
+      Fn::GetAtt:
+      - AskQuestionLambdaFunction
+      - Arn
+  DynamoDBTableName:
+    Description: DynamoDB Table Name for storing extracted text
+    Value:
+      Ref: PdfTextTable
